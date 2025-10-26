@@ -50,7 +50,7 @@ Examples:
 
     parser.add_argument(
         '--database-url',
-        help='PostgreSQL database URL',
+        help='PostgreSQL database URL in format:  postgresql://(psql-user):(psql-passwd)@(host)/(database)',
         default='postgresql://postgres:password@localhost/github_analysis'
     )
 
