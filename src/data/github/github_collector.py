@@ -1,287 +1,308 @@
-import concurrent.futures
-import re
-import time
-from threading import Lock
+import multiprocessing as mp
+from multiprocessing import Pool
+import os
 
 from .github_client import GitHubClient
-from src.utils.utils import format_date, clean_message, safe_lower
+from src.utils.utils import format_date, clean_message
+from src.storage.repo.repo import RepositoryRepository, ContributorRepository, CommitRepository
+from src.storage.unit_of_work import UnitOfWork
 
 
 class GitHubDatasetCollector:
-    def __init__(
-            self,
-            token=None,
-            max_workers=50,
-            max_contributors=50,
-            min_contributions=100,
-            max_repos=30,
-            min_commits_per_repo=5,
-            max_commits_per_user=1000,
-    ):
-        self.__client = GitHubClient(token)
-        self.__max_workers = max_workers
-        self.__max_contributors = max_contributors
-        self.__min_contributions = min_contributions
-        self.__max_repos = max_repos
-        self.__min_commits_per_repo = min_commits_per_repo
-        self.__max_commits_per_user = max_commits_per_user
-        self.__lock = Lock()
+    def __init__(self, token=None, max_workers=None, max_repos=30, database_url=None):
+        self.token = token or os.getenv('GITHUB_TOKEN')
+        self.max_workers = max_workers or mp.cpu_count()
+        self.max_repos = max_repos
+        self.database_url = database_url
 
-        # Databases for classification
-        self.corporate_owners = {
-            'google', 'microsoft', 'facebook', 'apple', 'amazon', 'netflix',
-            'twitter', 'linkedin', 'uber', 'airbnb', 'spotify', 'docker',
-            'mozilla', 'adobe', 'oracle', 'ibm', 'intel', 'nvidia', 'github',
-            'apache', 'kubernetes', 'elastic', 'mongodb', 'redis'
-        }
-
-        self.educational_keywords = {
-            'university', 'college', 'edu', 'academy', 'school', 'course',
-            'tutorial', 'learning', 'bootcamp', 'curriculum', 'assignment',
-            'homework', 'student', 'coursera', 'udemy', 'udacity', 'edx',
-            'lab-', 'project-', 'exercise', 'workshop', 'training'
-        }
-
-        # Keywords for identifying non-programming repositories
-        self.non_tech_keywords = {
-            'book', 'books', 'paper', 'papers', 'article', 'articles',
-            'curriculum', 'syllabus', 'lecture', 'lectures', 'notes',
-            'resource', 'resources', 'list', 'awesome', 'collection',
-            'interview', 'interview-questions', 'cheatsheet', 'cheat-sheet',
-            'guide', 'tutorial', 'learning', 'study', 'studying',
-            'blog', 'blog-posts', 'writing', 'documentation', 'roadmap', "public API\'s"
-        }
+        if database_url:
+            UnitOfWork(database_url).create_tables()
 
     def collect_repos(self):
-        """Main collect method with parallel processing"""
-        print("Getting popular TECHNICAL repositories...")
-        print(
-            f"Filtering: skipping repositories without programming language, content collections and with <"
-            f" {self.__min_commits_per_repo} commits")
+        """Main method for data collection using true multiprocessing"""
+        print(f"Starting MULTIPROCESSING data collection...")
+        print(f"Processes: {self.max_workers}, Repositories: {self.max_repos}")
 
-        repositories = self.__get_popular_repositories(self.__max_repos, self.__min_commits_per_repo)
+        repositories = self.__get_popular_repositories(self.max_repos)
+        print(f"Found {len(repositories)} repositories")
 
-        all_results = []
+        chunk_size = max(1, len(repositories) // self.max_workers)
+        repo_chunks = [repositories[i:i + chunk_size] for i in range(0, len(repositories), chunk_size)]
+
+        print(f"Split into {len(repo_chunks)} chunks for parallel processing")
+
+        with Pool(processes=self.max_workers) as pool:
+            tasks = []
+            for i, chunk in enumerate(repo_chunks):
+                task = {
+                    'repositories': chunk,
+                    'database_url': self.database_url,
+                    'token': self.token,
+                    'worker_id': i
+                }
+                tasks.append(task)
+
+            results = pool.map(self._process_repository_chunk, tasks)
+
+        total_repos = 0
         total_contributors = 0
+        total_commits = 0
 
-        print(f"\nStarting parallel analysis of {len(repositories)} TECHNICAL repositories...")
+        for result in results:
+            if result:
+                total_repos += result['repos_count']
+                total_contributors += result['contributors_count']
+                total_commits += result['commits_count']
 
-        all_contributor_data = []
+        print(f"FINISHED: {total_repos} repos, {total_contributors} contributors, {total_commits} commits")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            future_to_repo = {executor.submit(self.__analyze_repository_contributors, repo): repo for repo in
-                              repositories}
-
-            for future in concurrent.futures.as_completed(future_to_repo):
-                try:
-                    contributor_data = future.result()
-                    all_contributor_data.extend(contributor_data)
-                    total_contributors += len(contributor_data)
-                except Exception as e:
-                    print(f"Error analyzing repository: {e}")
-
-        print(f"\nTotal contributors collected for processing: {total_contributors}")
-
-        print("Parallel processing of contributors and getting commits...")
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.__max_workers) as executor:
-            futures = [executor.submit(self.__process_single_contributor, data) for data in all_contributor_data]
-
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                try:
-                    results = future.result()
-                    if not results:
-                        continue
-                    all_results.extend(results)
-
-                    if i % 5 == 0:  # Less frequent progress updates due to longer processing time
-                        print(f"Processed contributors: {i + 1}/{len(futures)}")
-
-                except Exception as e:
-                    print(f"Error processing contributor: {e}")
-
-        return all_results
-
-    def is_technical_repository(self, repo_data):
-        """Check if repository is technical (has programming language)"""
-        language = repo_data.get('language')
-        if not language or language in ["Markdown", "HTML"]:
-            print(f"Skipped: no programming language - {repo_data['full_name']}")
-            return False
-
-        description = safe_lower(repo_data.get('description', ''))
-        repo_name = safe_lower(repo_data.get('name', ''))
-
-        repo_text = f"{repo_name} {description}"
-
-        non_tech_indicators = sum(1 for keyword in self.non_tech_keywords if keyword in repo_text)
-        if non_tech_indicators >= 2:
-            print(f"Skipped: non-technical content - {repo_data['full_name']}")
-            return False
-
-        if self.__is_likely_non_tech(repo_data):
-            print(f"Skipped: likely non-technical - {repo_data['full_name']}")
-            return False
-
-        return True
-
-    def __is_likely_non_tech(self, repo_data):
-        """Check if repository is likely non-technical"""
-        full_name = safe_lower(repo_data.get('full_name', ''))
-        description = safe_lower(repo_data.get('description', ''))
-
-        known_non_tech_repos = {
-            'awesome', 'awesome-list', 'interview', 'books', 'paper',
-            'curriculum', 'syllabus', 'lecture-notes', 'javascript-algorithms'
+        return {
+            'total_repos': total_repos,
+            'total_contributors': total_contributors,
+            'total_commits': total_commits
         }
 
-        for non_tech_repo in known_non_tech_repos:
-            if non_tech_repo in full_name:
-                return True
+    @staticmethod
+    def _process_repository_chunk(task):
+        """Worker processes a chunk (multiple repositories)"""
+        worker_id = task['worker_id']
+        repositories = task['repositories']
+        database_url = task['database_url']
+        token = task['token']
 
-        non_tech_patterns = [
-            r'awesome.*list',
-            r'curriculum',
-            r'syllabus',
-            r'lecture.*notes',
-            r'interview.*questions',
-            r'book.*collection'
-        ]
+        print(f"Worker {worker_id} started processing {len(repositories)} repositories")
 
-        text_to_check = f"{full_name} {description}"
-        for pattern in non_tech_patterns:
-            if re.search(pattern, text_to_check):
-                return True
+        client = GitHubClient(token)
 
-        return False
+        repo_repo = RepositoryRepository(database_url)
+        contrib_repo = ContributorRepository(database_url)
+        commit_repo = CommitRepository(database_url)
 
-    def __determine_repo_type(self, repo_data):
-        """Determine repository type"""
-        owner = repo_data.get('owner', {})
-        owner_login = safe_lower(owner.get('login', ''))
-        organization = safe_lower(repo_data.get('organization', ''))
-        repo_name = safe_lower(repo_data.get('name', ''))
-        description = safe_lower(repo_data.get('description', ''))
+        worker_repos_count = 0
+        worker_contributors_count = 0
+        worker_commits_count = 0
 
-        if owner_login in self.corporate_owners or (organization is not None and len(organization) > 0):
-            return "corporate"
+        for repo in repositories:
+            try:
+                print(f"Worker {worker_id}: Processing {repo['full_name']}")
 
-        repo_text = f"{repo_name} {description}"
-        edu_indicators = sum(1 for keyword in self.educational_keywords if keyword in repo_text)
-        if edu_indicators >= 2:
-            return "educational"
+                repo_repo.upsert_repository({
+                    'id': repo['id'],
+                    'name': repo['name'],
+                    'full_name': repo['full_name'],
+                    'description': repo.get('description'),
+                    'language': repo.get('language'),
+                    'stargazers_count': repo.get('stargazers_count', 0),
+                    'forks_count': repo.get('forks_count', 0),
+                    'watchers_count': repo.get('watchers_count', 0),
+                    'open_issues_count': repo.get('open_issues_count', 0),
+                    'size': repo.get('size', 0),
+                    'default_branch': repo.get('default_branch'),
+                    'created_at': format_date(repo.get('created_at')),
+                    'updated_at': format_date(repo.get('updated_at')),
+                    'pushed_at': format_date(repo.get('pushed_at')),
+                    'homepage': repo.get('homepage'),
+                    'topics': repo.get('topics', []),
+                    'owner_id': repo['owner']['id'],
+                    'owner_login': repo['owner']['login'],
+                    'owner_type': repo['owner']['type'],
+                    'is_fork': repo.get('fork', False),
+                    'has_issues': repo.get('has_issues', False),
+                    'has_projects': repo.get('has_projects', False),
+                    'has_downloads': repo.get('has_downloads', False),
+                    'has_wiki': repo.get('has_wiki', False),
+                    'has_pages': repo.get('has_pages', False),
+                    'archived': repo.get('archived', False),
+                    'disabled': repo.get('disabled', False)
+                })
 
-        topics = repo_data.get('topics', [])
-        if topics:
-            topics_lower = [safe_lower(topic) for topic in topics]
-            edu_topics = {'education', 'learning', 'tutorial', 'course', 'students', 'labs'}
-            if any(topic in topics_lower for topic in edu_topics):
-                return "educational"
+                contributors = GitHubDatasetCollector._get_contributors(
+                    client, repo['owner']['login'], repo['name']
+                )
 
-        return "open_source"
+                print(f"Worker {worker_id}: Found {len(contributors)} contributors for {repo['full_name']}")
 
-    def __get_all_contributors(self, owner, repo):
-        """Get all contributors with pagination and minimum contributions filtering"""
-        contributors = []
-        page = 1
+                for contributor in contributors:
+                    result = GitHubDatasetCollector._process_contributor(
+                        client, contributor, repo['id'],
+                        repo['owner']['login'], repo['name'],
+                        contrib_repo, commit_repo
+                    )
+                    if result:
+                        worker_contributors_count += 1
+                        worker_commits_count += result['commits_count']
 
-        while len(contributors) < self.__max_contributors:
-            url = f"{self.__client.base_url}/repos/{owner}/{repo}/contributors"
-            params = {
-                "page": page,
-                "per_page": 100,
-                "anon": "0"
-            }
+                worker_repos_count += 1
 
-            response = self.__client.make_request(url, params=params)
-            if response.status_code != 200:
-                break
+            except Exception as e:
+                print(f"Worker {worker_id} error processing {repo['full_name']}: {e}")
+                continue
 
-            page_contributors = response.json()
-            if not page_contributors:
-                break
+        print(f"Worker {worker_id} finished: {worker_repos_count} repos, {worker_contributors_count} contributors, {worker_commits_count} commits")
 
-            # Filter contributors by minimum commit count
-            filtered_contributors = [
-                contributor for contributor in page_contributors
-                if contributor.get('contributions', 0) >= self.__min_contributions
-            ]
+        return {
+            'repos_count': worker_repos_count,
+            'contributors_count': worker_contributors_count,
+            'commits_count': worker_commits_count
+        }
 
-            contributors.extend(filtered_contributors)
+    @staticmethod
+    def _process_contributor(client, contributor, repo_id, owner, repo_name, contrib_repo, commit_repo):
+        """Worker for processing contributor (optimized version)"""
+        username = contributor.get('login')
+        if not username:
+            return None
 
-            if len(page_contributors) < 100:
-                break
+        if contrib_repo.exists(contributor.get('id')):
+            print(f"Contributor {username} already exists, skipping...")
+            return None
 
-            page += 1
-            time.sleep(0.1)
+        user_info = client.get_user_info(username)
+        if not user_info:
+            return None
 
-        print(f"Contributors after filtering: {len(contributors)} (minimum {self.__min_contributions} commits)")
-        return contributors[:self.__max_contributors]
+        contrib_repo.upsert_contributor(
+            user_info,
+            repo_id,
+            contributor.get('contributions', 0)
+        )
 
-    def __get_user_commits(self, owner, repo, username, max_commits=5):
-        """Get commits by specific user in repository"""
+        commits = GitHubDatasetCollector._get_commits(client, owner, repo_name, username)
+
+        if commits:
+            for commit in commits:
+                commit_repo.upsert_commit(commit, repo_id, user_info.get('id'))
+
+        print(f"Saved {len(commits)} commits for {username}")
+
+        return {
+            'username': username,
+            'commits_count': len(commits)
+        }
+
+    @staticmethod
+    def _get_commits(client, owner, repo, username):
+        """Get ALL commits (without restrictions)"""
         commits = []
         page = 1
 
-        while len(commits) < max_commits:
-            url = f"{self.__client.base_url}/repos/{owner}/{repo}/commits"
+        while True:
+            url = f"{client.base_url}/repos/{owner}/{repo}/commits"
             params = {
                 "author": username,
                 "page": page,
-                "per_page": 10
+                "per_page": 1000
             }
 
-            response = self.__client.make_request(url, params=params)
-            if response.status_code != 200:
+            response = client.make_request(url, params=params)
+            if not response or response.status_code != 200:
                 break
 
             page_commits = response.json()
             if not page_commits:
                 break
 
-            for commit in page_commits:
-                if isinstance(commit, dict) and 'commit' in commit:
-                    commit_info = commit['commit']
-                    author_info = commit_info.get('author', {})
+            for commit_data in page_commits:
+                if isinstance(commit_data, dict):
+                    commit = GitHubDatasetCollector._extract_commit_details(
+                        commit_data, owner, repo, username
+                    )
+                    if commit:
+                        commits.append(commit)
 
-                    raw_date = author_info.get('date', '')
-                    formatted_date = format_date(raw_date)
-
-                    commits.append({
-                        'sha': commit.get('sha', '')[:8],  # Take only first 8 characters
-                        'date': formatted_date,
-                        'message': clean_message(commit_info.get('message', ''))
-                    })
-
-                    if len(commits) >= max_commits:
-                        break
-
-            if len(page_commits) < 10:
+            if len(page_commits) < 100:
                 break
 
             page += 1
-            time.sleep(0.2)
 
         return commits
 
-    def __get_popular_repositories(self, count=30, min_commits=1000):
-        """Get most popular repositories (only technical with minimum commit count)"""
+    @staticmethod
+    def _get_contributors(client, owner, repo):
+        """Worker for getting contributors"""
+        contributors = []
+        page = 1
+
+        while True:
+            url = f"{client.base_url}/repos/{owner}/{repo}/contributors"
+            params = {
+                "page": page,
+                "per_page": 1000,
+                "anon": "0"
+            }
+
+            response = client.make_request(url, params=params)
+            if not response or response.status_code != 200:
+                break
+
+            page_contributors = response.json()
+            if not page_contributors:
+                break
+
+            contributors.extend(page_contributors)
+
+            if len(page_contributors) < 100:
+                break
+
+            page += 1
+        return contributors
+
+    @staticmethod
+    def _extract_commit_details(commit_data, owner, repo, username):
+        """Extract commit details from GitHub API response"""
+        try:
+            commit_info = commit_data.get('commit', {})
+            author_info = commit_info.get('author', {})
+            committer_info = commit_info.get('committer', {})
+            stats = commit_data.get('stats', {})
+            files = [f.get('filename', '') for f in commit_data.get('files', [])]
+
+            verification = commit_info.get('verification', {})
+
+            return {
+                'sha': commit_data.get('sha', ''),
+                'repo_owner': owner,
+                'repo_name': repo,
+                'author_login': username,
+                'author_name': author_info.get('name', ''),
+                'author_email': author_info.get('email', ''),
+                'author_date': format_date(author_info.get('date', '')),
+                'committer_name': committer_info.get('name', ''),
+                'committer_email': committer_info.get('email', ''),
+                'commit_date': format_date(committer_info.get('date', '')),
+                'message': clean_message(commit_info.get('message', '')),
+                'comment_count': commit_info.get('comment_count', 0),
+                'verification_verified': verification.get('verified', False),
+                'verification_reason': verification.get('reason', ''),
+                'additions': stats.get('additions', 0),
+                'deletions': stats.get('deletions', 0),
+                'total_changes': stats.get('total', 0),
+                'files_changed': files,
+            }
+        except Exception as e:
+            print(f"Error extracting commit: {e}")
+            return None
+
+    def __get_popular_repositories(self, count=30):
+        """Get popular repositories from GitHub"""
         repos = []
         page = 1
-        per_page = min(50, count * 3)  # Take more because we'll filter
+        per_page = max(100, count)
+
+        client = GitHubClient(self.token)
 
         while len(repos) < count:
-            url = f"{self.__client.base_url}/search/repositories"
+            url = f"{client.base_url}/search/repositories"
             params = {
-                "q": "stars:1000..66739 -language:HTML -language:TypeScript -language:Markdown",
+                "q": "stars:>100",
                 "sort": "stars",
                 "order": "desc",
                 "page": page,
                 "per_page": per_page
             }
 
-            response = self.__client.make_request(url, params=params, is_search=True)
-            if response.status_code != 200:
+            response = client.make_request(url, params=params, is_search=True)
+            if not response or response.status_code != 200:
                 break
 
             data = response.json()
@@ -289,23 +310,8 @@ class GitHubDatasetCollector:
                 break
 
             for repo in data["items"]:
-                if not self.is_technical_repository(repo):
-                    continue
-
-                owner = repo['owner']['login']
-                repo_name = repo['name']
-                print(f"Checking commits for {owner}/{repo_name}...")
-
-                commit_count = self.__client.get_commit_count(owner, repo_name)
-                repo['commit_count'] = commit_count
-
-                if commit_count >= min_commits:
-                    repos.append(repo)
-                    print(
-                        f"Added repository: {repo['full_name']} ({commit_count} commits,"
-                        f" {repo.get('language', 'No language')}, stars: {repo.get('stargazers_count', 0)})")
-                else:
-                    print(f"Skipped: too few commits ({commit_count} < {min_commits}) - {repo['full_name']}")
+                repos.append(repo)
+                print(f"Added repository: {repo['full_name']} (stars: {repo.get('stargazers_count', 0)})")
 
                 if len(repos) >= count:
                     break
@@ -314,92 +320,5 @@ class GitHubDatasetCollector:
                 break
 
             page += 1
-            time.sleep(1)
-
-            print(f"Found suitable repositories: {len(repos)}/{count}")
 
         return repos[:count]
-
-    def __process_single_contributor(self, contributor_data):
-        """Process single contributor in separate thread"""
-        repo_info, contributor = contributor_data
-        results = []
-
-        if isinstance(contributor, dict) and 'login' in contributor:
-            username = contributor['login']
-            owner = repo_info['owner_login']
-            repo_name = repo_info['repo_name'].split('/')[1] if '/' in repo_info['repo_name'] else repo_info[
-                'repo_name']
-
-            user_info = self.__client.get_user_info(username)
-            location = user_info.get('location', 'Unknown')
-            if not location:
-                return []
-
-            print(f"    Getting commits for {username}...")
-            commits = self.__get_user_commits(owner, repo_name, username, self.__max_commits_per_user)
-
-            if commits:
-                for commit in commits:
-                    result = {
-                        'repo_id': repo_info['id'],
-                        'repo_name': repo_info['repo_name'],
-                        'repo_type': repo_info['repo_type'],
-                        'stars': repo_info['stargazers_count'],
-                        'contributor_login': username,
-                        'contributor_location': location,
-                        'contributions': contributor.get('contributions', 0),
-                        'commit_sha': commit['sha'],
-                        'commit_date': commit['date'],
-                    }
-                    results.append(result)
-            else:
-                result = {
-                    'repo_id': repo_info['id'],
-                    'repo_name': repo_info['repo_name'],
-                    'repo_type': repo_info['repo_type'],
-                    'stars': repo_info['stargazers_count'],
-                    'contributor_login': username,
-                    'contributor_location': location,
-                    'contributions': contributor.get('contributions', 0),
-                    'commit_sha': 'N/A',
-                    'commit_date': 'N/A',
-                }
-                results.append(result)
-
-            with self.__lock:
-                print(f"    Processed contributor: {username} ({len(commits)} commits)")
-
-        return results
-
-    def __analyze_repository_contributors(self, repo):
-        """Analyze single repository and get all its contributors"""
-        repo_id = repo['id']
-        repo_name = repo['full_name']
-        owner = repo['owner']['login']
-        commit_count = repo.get('commit_count', 0)
-
-        print(f"Analyzing repository: {repo_name} ({repo.get('language', 'No language')}, {commit_count} commits)")
-
-        repo_type = self.__determine_repo_type(repo)
-        print(f"  Type: {repo_type}")
-
-        stars = repo['stargazers_count']
-        print(f"  Stars: {stars}")
-
-        contributors = self.__get_all_contributors(owner, repo['name'])
-        print(f"  Found contributors: {len(contributors)}")
-
-        repo_info = {
-            'id': repo_id,
-            'repo_name': repo_name,
-            'repo_type': repo_type,
-            'stars': stars,
-            'owner_login': owner,
-            'stargazers_count': repo.get('stargazers_count', 0),
-            'commit_count': commit_count
-        }
-
-        contributor_data = [(repo_info, contributor) for contributor in contributors]
-
-        return contributor_data
