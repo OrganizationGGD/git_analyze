@@ -19,7 +19,7 @@ def main():
     setup_imports()
 
     parser = argparse.ArgumentParser(
-        description='GitHub Dataset Tool - Collect GitHub repository data using multiprocessing',
+        description='GitHub Dataset Tool - Collect GitHub repository data',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -68,14 +68,14 @@ Examples:
 
 
 def run_collection(args):
-    """Run multiprocessing collection"""
+    """Run collection"""
     if not args.token:
         print("Error: GitHub token is required for data collection.")
         print("Use --token argument or set GITHUB_TOKEN environment variable.")
         print("You can get a token from: https://github.com/settings/tokens")
         sys.exit(1)
 
-    print("Starting GitHub Data Collection (Multiprocessing)")
+    print("Starting GitHub Data Collection")
     print("=" * 50)
     print(f"Repositories to collect: {args.repos}")
     print(f"Workers: {args.workers or 'CPU count'}")
