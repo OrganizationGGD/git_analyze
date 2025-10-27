@@ -19,7 +19,7 @@ class GitHubDatasetCollector:
             UnitOfWork(database_url).create_tables()
 
     def collect_repos(self):
-        """Main method for data collection using true multiprocessing"""
+        """Main method for data collection"""
         print(f"Starting MULTIPROCESSING data collection...")
         print(f"Processes: {self.max_workers}, Repositories: {self.max_repos}")
 
@@ -64,7 +64,7 @@ class GitHubDatasetCollector:
 
     @staticmethod
     def _process_repository_chunk(task):
-        """Worker processes a chunk (multiple repositories)"""
+        """Worker processes a chunk"""
         worker_id = task['worker_id']
         repositories = task['repositories']
         database_url = task['database_url']
@@ -148,7 +148,7 @@ class GitHubDatasetCollector:
 
     @staticmethod
     def _process_contributor(client, contributor, repo_id, owner, repo_name, contrib_repo, commit_repo):
-        """Worker for processing contributor (optimized version)"""
+        """Worker for processing contributor"""
         username = contributor.get('login')
         if not username:
             return None
@@ -182,7 +182,7 @@ class GitHubDatasetCollector:
 
     @staticmethod
     def _get_commits(client, owner, repo, username):
-        """Get ALL commits (without restrictions)"""
+        """Get all commits"""
         commits = []
         page = 1
 
@@ -287,7 +287,7 @@ class GitHubDatasetCollector:
         """Get popular repositories from GitHub"""
         repos = []
         page = 1
-        per_page = max(100, count)
+        per_page = 100
 
         client = GitHubClient(self.token)
 
