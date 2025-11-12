@@ -17,6 +17,10 @@ class UnitOfWork:
     def get_session(self):
         return self.session_factory()
 
+    def create_analysis_tables(self):
+        from src.analysis.models.models import Base
+        Base.metadata.create_all(self.engine)
+
     def create_tables(self):
-        from .models.models import Base
+        from src.data.models.models import Base
         Base.metadata.create_all(self.engine)
