@@ -1,8 +1,7 @@
 from contextlib import contextmanager
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import text
 from src.storage.unit_of_work import UnitOfWork
-from src.analysis.models.models import (
+from src.analysis.clustering.type.models.models import (
     RepositoryClusteringResult,
     RepositoryType
 )
