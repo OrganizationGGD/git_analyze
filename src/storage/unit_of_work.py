@@ -27,3 +27,11 @@ class UnitOfWork:
     def create_tables(self):
         from src.data.models.models import Base
         Base.metadata.create_all(self.engine)
+
+    def create_correlation_tables(self):
+        from src.analysis.correlation.models.models import Base
+        Base.metadata.create_all(self.engine)
+
+    def create_activity_tables(self):
+        from src.analysis.activity.models.models import Base
+        Base.metadata.create_all(self.engine)
