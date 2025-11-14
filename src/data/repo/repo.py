@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from sqlalchemy.dialects.postgresql import insert
 from src.storage.unit_of_work import UnitOfWork
-from src.storage.models.models import Repository, Contributor, Commit, RepositoryContributor
+from src.data.models.models import Repository, Contributor, Commit, RepositoryContributor
 
 
 class RepositoryRepository:

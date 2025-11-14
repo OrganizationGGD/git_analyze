@@ -4,7 +4,7 @@ import os
 
 from .github_client import GitHubClient
 from src.utils.utils import format_date, clean_message
-from src.storage.repo.repo import RepositoryRepository, ContributorRepository, CommitRepository
+from src.data.repo.repo import RepositoryRepository, ContributorRepository, CommitRepository
 from src.storage.unit_of_work import UnitOfWork
 
 
