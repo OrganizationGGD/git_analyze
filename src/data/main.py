@@ -3,16 +3,62 @@ import argparse
 import os
 import sys
 import time
+import yaml
 
+from pathlib import Path
 from data.github.github_collector import GitHubDatasetCollector
 
+def load_config(args):
+    """Load configuration from source"""
+    if not args.config:
+        return {}
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {args.config}")
+
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Warning: Could not load config from {config_path}: {e}. Input supports only YAML/YML format!")
+
+def merge_config_with_args(args, config):
+    """Merge command line arguments with config file values"""
+    final_args = argparse.Namespace(**vars(args))
+
+    arg_config_map = {
+        'token': 'token',
+        'repos': 'repos',
+        'workers': 'workers',
+        'database_url': 'database_url'
+    }
+
+    for arg_name, config_key in arg_config_map.items():
+        config_value = config.get(config_key)
+        if config_value is not None:
+            current_value = getattr(args, arg_name)
+            default_value = get_default_value(arg_name)
+            if current_value == default_value:
+                setattr(final_args, arg_name, config_value)
+
+    return final_args
+
+def get_default_value(arg_name):
+    """Get the default value for an argument"""
+    defaults = {
+        'token': os.getenv('GITHUB_TOKEN'),
+        'repos': 50,
+        'workers': 10,
+        'database_url': 'postgresql://postgres:password@localhost/github_analysis'
+    }
+    return defaults.get(arg_name)
 
 def setup_imports():
     """Setup proper imports"""
     src_dir = os.path.dirname(__file__)
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
-
 
 def main():
     """Main entry point"""
@@ -25,7 +71,16 @@ def main():
 Examples:
   # Basic collection
   python main.py --token ghp_yourtoken123 --repos 10 --workers 4
-        """
+
+  # Using config file
+  python main.py --config config.yml
+      """
+    )
+
+    parser.add_argument(
+        '--config',
+        help='Path to configuration file (YAML/YML)',
+        type=str
     )
 
     parser.add_argument(
@@ -56,8 +111,12 @@ Examples:
 
     args = parser.parse_args()
 
+    config = load_config(args)
+
+    fin_args = merge_config_with_args(args, config)
+
     try:
-        run_collection(args)
+        run_collection(fin_args)
 
     except KeyboardInterrupt:
         print("\nOperation interrupted by user")

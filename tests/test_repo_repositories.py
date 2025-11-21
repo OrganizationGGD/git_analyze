@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from src.storage.repo.repo import RepositoryRepository, ContributorRepository, CommitRepository
+from src.data.repo.repo import RepositoryRepository, ContributorRepository, CommitRepository
 
 
 @pytest.fixture
@@ -9,7 +9,7 @@ def mock_session():
 
 
 # ✅ Patch the entire UnitOfWork class, not just .get_session
-@patch("src.storage.repo.repo.UnitOfWork", autospec=True)
+@patch("src.data.repo.repo.UnitOfWork", autospec=True)
 def test_upsert_repository(mock_uow_class, mock_session):
     # Make UnitOfWork().get_session() return our mock session
     mock_uow_instance = mock_uow_class.return_value
@@ -24,7 +24,7 @@ def test_upsert_repository(mock_uow_class, mock_session):
     mock_session.commit.assert_called_once()
 
 
-@patch("src.storage.repo.repo.UnitOfWork", autospec=True)
+@patch("src.data.repo.repo.UnitOfWork", autospec=True)
 def test_contributor_exists(mock_uow_class, mock_session):
     mock_uow_instance = mock_uow_class.return_value
     mock_session.query().filter().count.return_value = 1
@@ -34,7 +34,7 @@ def test_contributor_exists(mock_uow_class, mock_session):
     assert contrib_repo.exists(1) is True
 
 
-@patch("src.storage.repo.repo.UnitOfWork", autospec=True)
+@patch("src.data.repo.repo.UnitOfWork", autospec=True)
 def test_commit_upsert(mock_uow_class, mock_session):
     mock_uow_instance = mock_uow_class.return_value
     mock_uow_instance.get_session.return_value = mock_session
