@@ -3,6 +3,9 @@ import argparse
 import os
 import sys
 from src.analysis import RepositoryAnalyzer, LocationAnalyzer
+from src.analysis.correlation.correlation import CommitCorrelationAnalyzer
+from src.analysis.activity.forecasting import HoltWintersActivityAnalyzer
+
 
 
 def setup_imports():
@@ -59,25 +62,50 @@ def main():
 
         # Анализ репозиториев
         if args.analyze:
-            print("\nREPOSITORY TYPE ANALYSIS")
-            print("-" * 25)
-            repo_analyzer = RepositoryAnalyzer(args.database_url, args.workers)
-            repo_results = repo_analyzer.analyze()
+            # print("\nREPOSITORY TYPE ANALYSIS")
+            # print("-" * 25)
+            # repo_analyzer = RepositoryAnalyzer(args.database_url, args.workers)
+            # repo_results = repo_analyzer.analyze()
+            #
+            # if 'error' in repo_results:
+            #     print(f"Repository analysis failed: {repo_results['error']}")
+            # else:
+            #     print("Repository analysis completed successfully.")
+            #
+            # print("\nCONTRIBUTOR LOCATION ANALYSIS")
+            # print("-" * 30)
+            # location_analyzer = LocationAnalyzer(args.database_url, args.workers)
+            # location_results = location_analyzer.analyze()
+            #
+            # if 'error' in location_results:
+            #     print(f"Location analysis failed: {location_results['error']}")
+            # else:
+            #     print("Location analysis completed successfully.")
 
-            if 'error' in repo_results:
-                print(f"Repository analysis failed: {repo_results['error']}")
+            # print("\nCOMMIT ACTIVITY ANALYSIS (WEEK VS FREQUENCY)")
+            # print("-" * 40)
+            # commit_corr_analyzer = CommitCorrelationAnalyzer(args.database_url, args.workers)
+            # corr_results = commit_corr_analyzer.analyze()
+            #
+            # if 'error' in corr_results:
+            #     print(f"Commit correlation analysis failed: {corr_results['error']}")
+            # else:
+            #     print("Commit correlation analysis completed successfully.")
+            #     print(f"Global correlation: {corr_results['global_correlation']:.4f}")
+
+            print("\nREPOSITORY ACTIVITY FORECAST & ANOMALY DETECTION")
+            print("-" * 50)
+
+            activity_analyzer = HoltWintersActivityAnalyzer(args.database_url)
+            activity_results = activity_analyzer.analyze()
+
+            if 'error' in activity_results:
+                print(f"Activity analysis failed: {activity_results['error']}")
             else:
-                print("Repository analysis completed successfully.")
-
-            print("\nCONTRIBUTOR LOCATION ANALYSIS")
-            print("-" * 30)
-            location_analyzer = LocationAnalyzer(args.database_url, args.workers)
-            location_results = location_analyzer.analyze()
-
-            if 'error' in location_results:
-                print(f"Location analysis failed: {location_results['error']}")
-            else:
-                print("Location analysis completed successfully.")
+                print("Activity analysis completed successfully.")
+                print(f"Total points: {activity_results['total_points']}")
+                print(f"Total anomalies: {activity_results['anomalies']}")
+                print(f"Repos with anomalies: {activity_results['repos_with_anomalies']}")
 
         print("\n" + "=" * 40)
         print("All analyses completed successfully!")
