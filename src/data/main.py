@@ -2,11 +2,11 @@
 import argparse
 import os
 import sys
-import time
 import yaml
 
 from pathlib import Path
-from data.github.github_collector import GitHubDatasetCollector
+from src.data.github.github_collector import GitHubDatasetCollector
+
 
 def load_config(args):
     """Load configuration from source"""
@@ -22,6 +22,7 @@ def load_config(args):
             return yaml.safe_load(f)
     except Exception as e:
         print(f"Warning: Could not load config from {config_path}: {e}. Input supports only YAML/YML format!")
+
 
 def merge_config_with_args(args, config):
     """Merge command line arguments with config file values"""
@@ -44,6 +45,7 @@ def merge_config_with_args(args, config):
 
     return final_args
 
+
 def get_default_value(arg_name):
     """Get the default value for an argument"""
     defaults = {
@@ -54,11 +56,13 @@ def get_default_value(arg_name):
     }
     return defaults.get(arg_name)
 
+
 def setup_imports():
     """Setup proper imports"""
     src_dir = os.path.dirname(__file__)
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
+
 
 def main():
     """Main entry point"""
@@ -146,7 +150,6 @@ def run_collection(args):
         max_repos=args.repos,
         database_url=args.database_url
     )
-
 
     try:
         results = collector.collect_repos()

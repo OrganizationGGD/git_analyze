@@ -25,23 +25,9 @@ def main():
     )
 
     parser.add_argument(
-        '--clusters',
-        type=int,
-        default=3,
-        help='Number of repository clusters (default: 3)'
-    )
-
-    parser.add_argument(
         '--workers',
         type=int,
         help='Number of parallel workers'
-    )
-
-    parser.add_argument(
-        '--chunk-size',
-        type=int,
-        default=1000,
-        help='Chunk size for processing (default: 1000)'
     )
 
     parser.add_argument(
