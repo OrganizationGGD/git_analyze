@@ -45,6 +45,13 @@ def main():
     )
 
     parser.add_argument(
+        '--location',
+        action='store_true',
+        default=True,
+        help='Make location clustering for repositories'
+    )
+
+    parser.add_argument(
         '--spark-master',
         default='spark://spark-master:7077',
         help='Spark master URL'
@@ -80,16 +87,16 @@ def main():
                     print("Spark repository analysis completed successfully.")
 
                 spark_analyzer.stop()
+            if args.location:
+                print("\nCONTRIBUTOR LOCATION ANALYSIS")
+                print("-" * 30)
+                location_analyzer = LocationAnalyzer(args.database_url, args.workers)
+                location_results = location_analyzer.analyze()
 
-            print("\nCONTRIBUTOR LOCATION ANALYSIS")
-            print("-" * 30)
-            location_analyzer = LocationAnalyzer(args.database_url, args.workers)
-            location_results = location_analyzer.analyze()
-
-            if 'error' in location_results:
-                print(f"Location analysis failed: {location_results['error']}")
-            else:
-                print("Location analysis completed successfully.")
+                if 'error' in location_results:
+                    print(f"Location analysis failed: {location_results['error']}")
+                else:
+                    print("Location analysis completed successfully.")
 
         print("\n" + "=" * 40)
         print("All analyses completed successfully!")
