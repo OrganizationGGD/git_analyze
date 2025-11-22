@@ -20,28 +20,126 @@ services:
     networks:
       - github_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: github_analysis_pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@github-analysis.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+#  pgadmin:
+#    image: dpage/pgadmin4:latest
+#    container_name: github_analysis_pgadmin
+#    environment:
+#      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@github-analysis.com}
+#      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+#    ports:
+#      - "${PGADMIN_PORT:-8080}:80"
+#    volumes:
+#      - pgadmin_data:/var/lib/pgadmin
+#    networks:
+#      - github_network
+#    depends_on:
+#      - postgres
+#    profiles:
+#      - admin
+
+  spark-master:
+    build:
+      context: .
+      dockerfile: src/analysis/spark/Dockerfile
+    container_name: github_analysis_spark_master
+    hostname: spark-master
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master
+      --port 7077
+      --webui-port 8080
     ports:
-      - "${PGADMIN_PORT:-8080}:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
+      - "8081:8080"
+      - "7077:7077"
     networks:
-      - github_network
+      github_network:
+        aliases:
+          - spark-master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+      SPARK_LOCAL_IP: spark-master
+
+  spark-worker-1:
+    build:
+      context: .
+      dockerfile: src/analysis/spark/Dockerfile
+    container_name: github_analysis_spark_worker_1
+    hostname: spark-worker-1
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8081
+      --cores 2
+      --memory 2g
     depends_on:
-      - postgres
-    profiles:
-      - admin
+      - spark-master
+    networks:
+      github_network:
+        aliases:
+          - spark-worker-1
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_WEBUI_PORT: 8081
+      SPARK_LOCAL_IP: spark-worker-1
+
+  spark-worker-2:
+    build:
+      context: .
+      dockerfile: src/analysis/spark/Dockerfile
+    container_name: github_analysis_spark_worker_2
+    hostname: spark-worker-2
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8081
+      --cores 2
+      --memory 2g
+    depends_on:
+      - spark-master
+    networks:
+      github_network:
+        aliases:
+          - spark-worker-2
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_WEBUI_PORT: 8081
+      SPARK_LOCAL_IP: spark-worker-2
+
+  spark-client:
+    build:
+      context: .
+      dockerfile: src/analysis/spark/Dockerfile
+    container_name: github_analysis_spark_client
+    hostname: spark-client
+    depends_on:
+      spark-master:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      github_network:
+        aliases:
+          - spark-client
+    environment:
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/github_analysis
+      - SPARK_MASTER=spark://spark-master:7077
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-github_analysis}
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: ["bash", "-c", "spark-submit --conf spark.submit.pyFiles=/opt/spark/pure_deps.zip src/analysis/main.py"]
 
 volumes:
   postgres_data:
