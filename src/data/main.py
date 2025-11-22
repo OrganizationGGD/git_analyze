@@ -5,7 +5,6 @@ import sys
 import yaml
 
 from pathlib import Path
-from src.data.github.github_collector import GitHubDatasetCollector
 
 
 def load_config(args):
@@ -143,6 +142,8 @@ def run_collection(args):
     print(f"Repositories to collect: {args.repos}")
     print(f"Workers: {args.workers or 'CPU count'}")
     print()
+
+    from src.data.github.github_collector import GitHubDatasetCollector
 
     collector = GitHubDatasetCollector(
         token=args.token,

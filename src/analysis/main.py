@@ -2,7 +2,6 @@
 import argparse
 import os
 import sys
-from src.analysis import RepositoryAnalyzer, LocationAnalyzer
 
 
 def setup_imports():
@@ -13,6 +12,8 @@ def setup_imports():
 
 def main():
     setup_imports()
+
+    from src.analysis import RepositoryAnalyzer, LocationAnalyzer
 
     parser = argparse.ArgumentParser(
         description='Analyze GitHub repositories and contributors'
