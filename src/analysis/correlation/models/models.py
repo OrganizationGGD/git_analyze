@@ -1,4 +1,3 @@
-# src/analysis/correlation/models/models.py
 from sqlalchemy import Column, Integer, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
@@ -6,25 +5,25 @@ from datetime import datetime
 Base = declarative_base()
 
 
-class CommitCorrelationGlobal(Base):
-    # Глобальная корреляция между номером недели и числом коммитов
-    __tablename__ = 'commit_correlation_global'
+class CommitCorrelationResult(Base):
+    __tablename__ = "commit_correlation_result"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    correlation = Column(Float, nullable=False)
-    repo_count = Column(Integer, nullable=False)   # сколько репозиториев участвовало
-    created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Global correlations for commits
+    commit_corr_week_of_year = Column(Float)   # corr(week_of_year, commit_count)
+    commit_corr_week_index = Column(Float)     # corr(week_index, commit_count)
 
-class CommitCorrelationByRepo(Base):
-    # Корреляция для каждого репозитория.
-    __tablename__ = 'commit_correlation_by_repo'
+    # Global correlations for PR -> commit lead time
+    pr_corr_week_of_year = Column(Float)       # corr(week_of_year, avg_lead_time_hours)
+    pr_corr_week_index = Column(Float)         # corr(week_index, avg_lead_time_hours)
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    repo_id = Column(Integer, index=True, nullable=False)
-    correlation = Column(Float, nullable=False)
-    points = Column(Integer, nullable=True)        # количество weekly-точек для этого репо
-    created_at = Column(DateTime, default=datetime.utcnow)
+    computed_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
-        return f"<CommitCorrelationByRepo(repo_id={self.repo_id}, corr={self.correlation:.4f})>"
+        return (
+            f"<CommitCorrelationResult("
+            f"commit_corr_week_index={self.commit_corr_week_index}, "
+            f"pr_corr_week_index={self.pr_corr_week_index}"
+            f")>"
+        )

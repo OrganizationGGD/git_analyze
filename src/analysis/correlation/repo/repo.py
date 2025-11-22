@@ -1,11 +1,9 @@
 from contextlib import contextmanager
 from sqlalchemy import text
-from src.storage.unit_of_work import UnitOfWork
-from src.analysis.correlation.models.models import (
-    CommitCorrelationGlobal,
-    CommitCorrelationByRepo,
-)
 import pandas as pd
+
+from src.storage.unit_of_work import UnitOfWork
+from src.analysis.correlation.models.models import CommitCorrelationResult
 
 
 class CorrelationRepository:
@@ -25,49 +23,65 @@ class CorrelationRepository:
         finally:
             session.close()
 
-    def load_weekly_commit_data(self) -> pd.DataFrame:
+    # ----------- LOADERS -----------
+
+    def load_commits(self) -> pd.DataFrame:
+        """
+        Load minimal commit info: repo_id, commit_date, message.
+        """
         with self.session_scope() as session:
             query = text("""
                 SELECT
                     repo_id,
-                    date_trunc('week', commit_date) AS week_start,
-                    COUNT(*) AS commit_count
+                    commit_date,
+                    message
                 FROM commits
-                GROUP BY repo_id, week_start
-                ORDER BY week_start
+                WHERE commit_date IS NOT NULL
             """)
 
             df = pd.read_sql(query, session.connection())
-            print(f"Loaded {len(df)} weekly commit rows")
+            print(f"[CorrelationRepository] Loaded {len(df)} commits")
             return df
 
-    def save_correlation_results(
-        self,
-        global_corr: float,
-        corr_by_repo: pd.Series,
-        weekly_df: pd.DataFrame,
-    ) -> None:
+    def load_pull_requests(self) -> pd.DataFrame:
+        """
+        Load minimal PR info needed for lead time:
+          - id
+          - repo_id
+          - number
+          - created_at (for start of lead time)
+          - merged_at (optional; we’ll use commit_date as end)
+        """
         with self.session_scope() as session:
-            session.query(CommitCorrelationGlobal).delete()
-            session.query(CommitCorrelationByRepo).delete()
+            query = text("""
+                SELECT
+                    id AS pr_id,
+                    repo_id,
+                    number AS pr_number,
+                    author_id AS pr_author_id,
+                    created_at AS pr_created_at,
+                    merged_at AS pr_merged_at
+                FROM pull_requests
+                WHERE created_at IS NOT NULL
+            """)
 
-            global_row = CommitCorrelationGlobal(
-                correlation=global_corr,
-                repo_count=len(corr_by_repo),
+            df = pd.read_sql(query, session.connection())
+            print(f"[CorrelationRepository] Loaded {len(df)} pull_requests")
+            return df
+
+    # ----------- SAVER -----------
+
+    def save_correlation_result(self, result_dict: dict) -> None:
+        """
+        Save a single global correlation result row.
+        We KEEP history; no deletes.
+        """
+        with self.session_scope() as session:
+            row = CommitCorrelationResult(
+                commit_corr_week_of_year=result_dict["commit_corr_week_of_year"],
+                commit_corr_week_index=result_dict["commit_corr_week_index"],
+                pr_corr_week_of_year=result_dict["pr_corr_week_of_year"],
+                pr_corr_week_index=result_dict["pr_corr_week_index"],
             )
-            session.add(global_row)
-
-            points_per_repo = weekly_df.groupby("repo_id").size()
-
-            rows = []
-            for repo_id, corr in corr_by_repo.items():
-                rows.append(
-                    CommitCorrelationByRepo(
-                        repo_id=int(repo_id),
-                        correlation=float(corr),
-                        points=int(points_per_repo.get(repo_id, 0)),
-                    )
-                )
-
-            session.add_all(rows)
-            print(f"Saved {len(rows)} per-repo correlation rows to database")
+            session.add(row)
+            print("[CorrelationRepository] Saved correlation result to database")
